@@ -30,7 +30,7 @@ class AudioChannelManager {
                 toggleButton.classList.remove('btn-primary');
                 toggleButton.classList.add('btn-danger');
             } catch (error) {
-                this.showError('Fehler beim Starten des Scanners: ' + error.message);
+                // Scanner konnte nicht gestartet werden
             }
         } else {
             this.stopScanner();
@@ -68,79 +68,155 @@ class AudioChannelManager {
     }
 
     onQRCodeScanned(qrContent) {
-        // Zuerst im Mapping nachschauen
         const audioUrl = this.getAudioUrlFromMapping(qrContent);
         
         if (audioUrl) {
+            if (this.hasChannelWithUrl(audioUrl)) {
+                return;
+            }
             this.addChannel(audioUrl);
-            this.showSuccess(`Audio-Datei hinzugefügt: ${this.getUrlFilename(audioUrl)}`);
         } else if (this.isValidAudioUrl(qrContent)) {
-            // Falls nicht im Mapping, prüfe ob es direkt eine gültige Audio-URL ist
+            if (this.hasChannelWithUrl(qrContent)) {
+                return;
+            }
             this.addChannel(qrContent);
-            this.showSuccess(`Audio-Datei hinzugefügt: ${this.getUrlFilename(qrContent)}`);
-        } else {
-            this.showError(`QR-Code nicht gefunden im Mapping und keine gültige Audio-URL: ${qrContent}`);
         }
+    }
+    
+    hasChannelWithUrl(url) {
+        // Normalisiere URL für Vergleich
+        let normalizedUrl = url;
+        try {
+            normalizedUrl = new URL(url, window.location.href).href;
+        } catch (e) {
+            // Falls URL-Parsing fehlschlägt, verwende Original
+        }
+        
+        // Prüfe alle Channels
+        for (const [channelId, channel] of this.channels.entries()) {
+            // Vergleiche sowohl die ursprüngliche URL als auch die absolute URL
+            if (channel.url === url || 
+                channel.absoluteUrl === normalizedUrl ||
+                channel.url === normalizedUrl ||
+                channel.absoluteUrl === url) {
+                return true;
+            }
+        }
+        return false;
     }
 
     getAudioUrlFromMapping(qrContent) {
-        // Prüfe ob audioMapping definiert ist (aus audio-mapping.js)
-        if (typeof audioMapping !== 'undefined' && audioMapping[qrContent]) {
-            return audioMapping[qrContent];
+        if (typeof audioMapping !== 'undefined') {
+            if (audioMapping[qrContent]) {
+                return audioMapping[qrContent];
+            }
+            const trimmed = qrContent.trim();
+            if (audioMapping[trimmed]) {
+                return audioMapping[trimmed];
+            }
         }
         return null;
     }
 
     isValidAudioUrl(url) {
-        try {
-            const urlObj = new URL(url);
-            const path = urlObj.pathname.toLowerCase();
-            const validExtensions = ['.mp3', '.wav', '.ogg', '.m4a', '.aac', '.webm'];
-            return validExtensions.some(ext => path.endsWith(ext)) || 
-                   urlObj.searchParams.has('audio') ||
-                   this.isAudioContentType(url);
-        } catch {
+        if (!url || typeof url !== 'string') {
             return false;
         }
-    }
-
-    async isAudioContentType(url) {
+        
         try {
-            const response = await fetch(url, { method: 'HEAD' });
-            const contentType = response.headers.get('content-type');
-            return contentType && contentType.startsWith('audio/');
+            // Unterstütze sowohl absolute als auch relative URLs
+            const urlObj = new URL(url, window.location.href);
+            const path = urlObj.pathname.toLowerCase();
+            const validExtensions = ['.mp3', '.wav', '.ogg', '.m4a', '.aac', '.webm'];
+            
+            // Prüfe Dateiendung
+            if (validExtensions.some(ext => path.endsWith(ext))) {
+                return true;
+            }
+            
+            // Prüfe URL-Parameter
+            if (urlObj.searchParams.has('audio')) {
+                return true;
+            }
+            
+            // Prüfe Content-Type (asynchron, aber wir geben true zurück wenn es eine URL ist)
+            // Die eigentliche Prüfung erfolgt beim Laden
+            return true;
         } catch {
-            return false;
+            // Für relative URLs, prüfe die Dateiendung direkt
+            const path = url.toLowerCase();
+            const validExtensions = ['.mp3', '.wav', '.ogg', '.m4a', '.aac', '.webm'];
+            return validExtensions.some(ext => path.endsWith(ext));
         }
     }
 
     getUrlFilename(url) {
         try {
-            const urlObj = new URL(url);
+            // Versuche absolute URL zu parsen
+            const urlObj = new URL(url, window.location.href);
             const pathname = urlObj.pathname;
-            return pathname.split('/').pop() || 'Unbekannt';
+            return pathname.split('/').pop() || url.split('/').pop() || 'Unbekannt';
         } catch {
-            return 'Unbekannt';
+            // Falls URL-Parsing fehlschlägt, versuche den Dateinamen aus dem Pfad zu extrahieren
+            return url.split('/').pop() || url || 'Unbekannt';
         }
     }
 
-    addChannel(audioUrl) {
+    async addChannel(audioUrl) {
         const channelId = `channel-${this.nextChannelId++}`;
-        const audio = new Audio(audioUrl);
+        
+        // Verwende die URL direkt - keine Konvertierung für absolute URLs
+        let absoluteUrl = audioUrl;
+        
+        if (!audioUrl.startsWith('http://') && !audioUrl.startsWith('https://') && !audioUrl.startsWith('data:')) {
+            try {
+                absoluteUrl = new URL(audioUrl, window.location.href).href;
+            } catch (e) {
+                // URL-Konvertierung fehlgeschlagen
+            }
+        }
+        
+        let finalUrl = absoluteUrl;
+        
+        if (absoluteUrl.startsWith('http://') || absoluteUrl.startsWith('https://')) {
+            try {
+                const response = await fetch(absoluteUrl);
+                if (response.ok) {
+                    const blob = await response.blob();
+                    finalUrl = URL.createObjectURL(blob);
+                }
+            } catch (fetchError) {
+                finalUrl = absoluteUrl;
+            }
+        }
+        
+        const audio = new Audio(finalUrl);
+        audio.preload = 'auto';
         
         audio.addEventListener('error', (e) => {
-            this.showError(`Fehler beim Laden von ${this.getUrlFilename(audioUrl)}`);
-            this.removeChannel(channelId);
+            setTimeout(() => {
+                if (audio.error) {
+                    this.removeChannel(channelId);
+                }
+            }, 100);
         });
 
-        audio.addEventListener('loadeddata', () => {
-            this.showSuccess(`Audio geladen: ${this.getUrlFilename(audioUrl)}`);
+        audio.addEventListener('canplay', () => {
+            audio.play().catch(() => {});
         });
-
+        
+        audio.addEventListener('canplaythrough', () => {
+            if (audio.paused && !audio.ended) {
+                audio.play().catch(() => {});
+            }
+        });
+        
         const channel = {
             id: channelId,
             audio: audio,
             url: audioUrl,
+            absoluteUrl: absoluteUrl,
+            blobUrl: finalUrl.startsWith('blob:') ? finalUrl : null, // Speichere Blob-URL für Cleanup
             volume: 1.0,
             isPlaying: false,
             isPaused: false
@@ -149,7 +225,7 @@ class AudioChannelManager {
         this.channels.set(channelId, channel);
         this.renderChannel(channel);
     }
-
+    
     renderChannel(channel) {
         const container = document.getElementById('channels-container');
         const channelCard = document.createElement('div');
@@ -224,9 +300,7 @@ class AudioChannelManager {
     playChannel(channelId) {
         const channel = this.channels.get(channelId);
         if (channel) {
-            channel.audio.play().catch(error => {
-                this.showError(`Fehler beim Abspielen: ${error.message}`);
-            });
+            channel.audio.play().catch(() => {});
             channel.isPlaying = true;
             channel.isPaused = false;
         }
@@ -264,6 +338,11 @@ class AudioChannelManager {
         if (channel) {
             this.stopChannel(channelId);
             channel.audio.src = '';
+            
+            if (channel.blobUrl) {
+                URL.revokeObjectURL(channel.blobUrl);
+            }
+            
             this.channels.delete(channelId);
             
             const channelCard = document.getElementById(channelId);
@@ -277,7 +356,6 @@ class AudioChannelManager {
         this.channels.forEach((channel, channelId) => {
             this.stopChannel(channelId);
         });
-        this.showSuccess('Alle Kanäle gestoppt');
     }
 
     updateChannelStatus(channelId, status) {
@@ -312,29 +390,8 @@ class AudioChannelManager {
         }
     }
 
-    showError(message) {
-        this.showMessage(message, 'error-message');
-    }
-
-    showSuccess(message) {
-        this.showMessage(message, 'success-message');
-    }
-
-    showMessage(message, className) {
-        const container = document.querySelector('.container');
-        const messageDiv = document.createElement('div');
-        messageDiv.className = className;
-        messageDiv.textContent = message;
-        
-        container.insertBefore(messageDiv, container.firstChild);
-        
-        setTimeout(() => {
-            messageDiv.remove();
-        }, 5000);
-    }
 }
 
-// Initialisierung beim Laden der Seite
 document.addEventListener('DOMContentLoaded', () => {
     new AudioChannelManager();
 });
