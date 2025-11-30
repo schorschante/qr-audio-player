@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>QR Audio Player - Mehrkanal</title>
+    <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>QR Audio Player</h1>
+            <p>Scanne QR-Codes, um Audio-Dateien als Kanäle hinzuzufügen</p>
+        </header>
+
+        <div class="scanner-section">
+            <div id="qr-reader"></div>
+            <button id="toggle-scanner" class="btn btn-primary">Scanner starten</button>
+            <button id="stop-all" class="btn btn-danger">Alle stoppen</button>
+        </div>
+
+        <div class="channels-section">
+            <h2>Aktive Kanäle</h2>
+            <div id="channels-container"></div>
+        </div>
+
+        <div class="info-section">
+            <h3>Hinweise</h3>
+            <ul>
+                <li>QR-Codes sollten URLs zu Audio-Dateien enthalten</li>
+                <li>Unterstützte Formate: MP3, WAV, OGG, M4A</li>
+                <li>Mehrere Kanäle werden gleichzeitig abgespielt</li>
+                <li>Jeder Kanal kann individuell gesteuert werden</li>
+            </ul>
+        </div>
+    </div>
+
+    <script src="audio-mapping.js"></script>
+    <script src="audio-player.js"></script>
+</body>
+</html>
+
